@@ -1,0 +1,16 @@
+/**:                                               #GNSS cycle 5Hz, IMU cycle 50Hz.
+  ros__parameters:
+  # image size
+    width: 2448
+    height: 2048
+    # focal length
+    k0: 1436.89437780124
+    k4: 1442.58498490709
+    # principal_points
+    k2: 1218.77863491507
+    k5: 1045.77362896196
+    # radial_distortion
+    radial_distortion: [0.0144210402954516,-0.0148287624062537]
+    tangential_distortion: [0.000000,0.000000]
+    skew: 0.000000
+    roi: [0,0,2447,2047]
