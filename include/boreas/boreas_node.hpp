@@ -39,6 +39,7 @@ private:
   void function1();
   void function2();
   void function3();
+  rclcpp::Time int_to_time_stamp(long long int & ros_time);
 
   template <typename MsgT>
   rclcpp::SerializedMessage serialize_message(const MsgT & msg);
@@ -74,6 +75,10 @@ private:
   std::unique_ptr<rosbag2_cpp::Writer> writer_;
 
   std::mutex mtx;  // Mutex for synchronization
-  };
+
+  bool done_camera_;
+  bool done_clock_;
+  bool done_pointcloud_;
+};
 }  // namespace boreas
 #endif  // BOREADS_NODE_HPP_

@@ -34,14 +34,16 @@ BoreasNode::BoreasNode() : Node("boreas")
   callback_group2_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   callback_group3_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
 
-  // timer1_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function1, this),
-  // callback_group1_); timer2_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function2,
-  // this), callback_group2_);
+  timer1_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function1, this), callback_group1_);
+  timer2_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function2, this), callback_group2_);
   timer3_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function3, this), callback_group3_);
 
   writer_ = std::make_unique<rosbag2_cpp::Writer>();
 
   writer_->open("boreas_bag");
+  done_camera_ = false;
+  done_clock_ = false;
+  done_pointcloud_ = false;
 }
 
 void BoreasNode::remove_slash_and_bin(std::string & in)
@@ -248,19 +250,28 @@ void BoreasNode::function1()
 
   std::sort(lidar_sorted_vec_.begin(), lidar_sorted_vec_.end());
   while (rclcpp::ok()) {
-    for (auto frame_set : lidar_sorted_vec_) {
-      std::string lidar_frame_path = frame_set.second;
-      Eigen::MatrixXd pc;
-      load_lidar(lidar_frame_path, pc);
-      sensor_msgs::msg::PointCloud2 pc_msg;
-      pc_msg = eigen_to_pointcloud(pc);
-      std::lock_guard<std::mutex> lock(mtx);  // Automatically locks & unlocks
+    if (!done_pointcloud_) {
+      for (auto frame_set : lidar_sorted_vec_) {
+        Eigen::MatrixXd pc;
+        sensor_msgs::msg::PointCloud2 pc_msg;
 
-      // lidar_msg_sorted_vec_.push_back(std::make_pair(frame_set.first, pc_msg));
-      // pc_pub_->publish(pc_msg);
-      // camera_info_msg_.header.stamp = now();
-      // camera_info_pub_->publish(camera_info_msg_);
-      // std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::string lidar_frame_path = frame_set.second;
+        load_lidar(lidar_frame_path, pc);
+        pc_msg = eigen_to_pointcloud(pc);
+        long long int frame_no = path_to_int_cam(lidar_frame_path);
+        auto time = int_to_time_stamp(frame_no);
+        pc_msg.header.stamp = time;
+        // pc_msg.header.stamp.nanosec = time.nanosec;
+        pc_msg.header.frame_id = "lidar";
+        auto ser_pc_msg = serialize_message(pc_msg);
+        std::lock_guard<std::mutex> lock(mtx);
+        writer_->write(
+          std::make_shared<rclcpp::SerializedMessage>(ser_pc_msg), "/point_cloud",
+          "sensor_msgs/msg/PointCloud2", time);
+      }
+      done_pointcloud_ = true;
+    } else {
+      // RCLCPP_INFO_STREAM(rclcpp::get_logger("function1"), "pc Done");
     }
   }
   RCLCPP_INFO_STREAM(get_logger(), "lidar data prepared");
@@ -284,17 +295,27 @@ void BoreasNode::function2()
 
   std::sort(camera_sorted_vec_.begin(), camera_sorted_vec_.end());
   while (rclcpp::ok()) {
-    for (auto frame_set : camera_sorted_vec_) {
-      std::string camera_frame_path = frame_set.second;
-      sensor_msgs::msg::Image::SharedPtr image_msg;
-      image_msg = read_image(camera_frame_path);
-      image_msg->header.frame_id = "camera";
-      image_msg->header.stamp = now();
-      camera_pub_->publish(*image_msg);
-      std::lock_guard<std::mutex> lock(mtx);  // Automatically locks & unlocks
+    if (!done_camera_) {
+      for (auto frame_set : camera_sorted_vec_) {
+        std::string camera_frame_path = frame_set.second;
+        sensor_msgs::msg::Image::SharedPtr image_msg;
+        image_msg = read_image(camera_frame_path);
+        long long int frame_no = path_to_int_cam(camera_frame_path);
+        auto time = int_to_time_stamp(frame_no);
+        image_msg->header.stamp = time;
+        // image_msg.header.stamp.nanosec = time.nanosec;
+        image_msg->header.frame_id = "camera";
+        auto ser_image_msg = serialize_message(*image_msg);
+        std::lock_guard<std::mutex> lock(mtx);
+        writer_->write(
+          std::make_shared<rclcpp::SerializedMessage>(ser_image_msg), "/camera_image",
+          "sensor_msgs/msg/Image", time);
+      }
+      done_camera_ = true;
+    } else {
+      // RCLCPP_INFO_STREAM(rclcpp::get_logger("function2"), "camera Done");
     }
   }
-  RCLCPP_INFO_STREAM(get_logger(), "camera data prepared");
 }
 
 sensor_msgs::msg::Image::SharedPtr BoreasNode::read_image(std::string & image_path)
@@ -315,17 +336,23 @@ void BoreasNode::function3()
   in.read_header(io::ignore_extra_column, "ROS Time", "GPS Time");
   long long int ros_time;
   float gps_time;
-  while (in.read_row(ros_time, gps_time)) {
-    long sec = ros_time / 1'000'000'000;
-    long nanosec = ros_time % 1'000'000'000;
-    rclcpp::Time time(sec, nanosec);
-    rosgraph_msgs::msg::Clock clock_msg;
-    clock_msg.clock = time;
-    auto ser_clock_msg = serialize_message(clock_msg);
-    std::lock_guard<std::mutex> lock(mtx);  // Automatically locks & unlocks
-    writer_->write(
-      std::make_shared<rclcpp::SerializedMessage>(ser_clock_msg), "/clock",
-      "rosgraph_msgs/msg/Clock", time);
+  while (rclcpp::ok()) {
+    if (!done_clock_) {
+      while (in.read_row(ros_time, gps_time) && rclcpp::ok()) {
+        auto time = int_to_time_stamp(ros_time);
+        rosgraph_msgs::msg::Clock clock_msg;
+        clock_msg.clock = time;
+        auto ser_clock_msg = serialize_message(clock_msg);
+
+        std::lock_guard<std::mutex> lock(mtx);  // Automatically locks & unlocks
+        writer_->write(
+          std::make_shared<rclcpp::SerializedMessage>(ser_clock_msg), "/clock",
+          "rosgraph_msgs/msg/Clock", time);
+      }
+      done_clock_ = true;
+    } else {
+      // RCLCPP_INFO_STREAM(rclcpp::get_logger("function2"), "clock Done");
+    }
   }
 }
 
@@ -336,6 +363,14 @@ rclcpp::SerializedMessage BoreasNode::serialize_message(const MsgT & msg)
   rclcpp::Serialization<MsgT> serializer;
   serializer.serialize_message(&msg, &serialized_msg);
   return serialized_msg;
+}
+
+rclcpp::Time BoreasNode::int_to_time_stamp(long long int & ros_time)
+{
+  long sec = ros_time / 1'000'000'000;
+  long nanosec = ros_time % 1'000'000'000;
+  rclcpp::Time time(sec, nanosec);
+  return time;
 }
 
 }  // namespace boreas
