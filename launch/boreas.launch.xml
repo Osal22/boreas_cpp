@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
     <arg name="config" default="$(find-pkg-share boreas)/config/boreas.yaml"/>
+    <arg name="data_path" default="/home/osal/Downloads/boreas-2021-04-08-12-44"/>
+    <!-- <arg name="data_path" default="/home/osal/Downloads/boreas_mini/"/> -->
 
 <!-- launch-prefix="xterm -e gdb args" -->
     <node pkg="boreas" exec="boreas" name="boreas" >
-        <param name="data_path" value="/home/osal/Downloads/boreas-2021-04-08-12-44"/>
+        <param name="data_path" value="$(var data_path)"/>
         <param from="$(var config)"/>
     </node>
 

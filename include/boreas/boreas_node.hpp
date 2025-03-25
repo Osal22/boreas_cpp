@@ -36,6 +36,12 @@ private:
   void publish_transform(const std::vector<std::vector<double>> & matrix);
   void publish_transform_op(std::string & path);
   bool load_camera_info();
+  void sync_time_stamps(
+    const std::vector<std::pair<long long int, std::string>> & arr1,
+    const std::vector<std::pair<long long int, std::string>> & arr2);
+
+  rclcpp::Time id_to_stamp(long long int ros_time);
+
   void function1();
   void function2();
   void function3();
@@ -71,9 +77,13 @@ private:
   std::vector<std::pair<long long int, std::string>> lidar_sorted_vec_;
   std::vector<std::pair<long long int, sensor_msgs::msg::PointCloud2>> lidar_msg_sorted_vec_;
 
+  std::vector<std::pair<long long int, long long int>> syn_vec_;
+
   std::unique_ptr<rosbag2_cpp::Writer> writer_;
 
   std::mutex mtx;  // Mutex for synchronization
-  };
+  bool lidar_data_ready_, camera_data_ready_, done_;
+  long long int init_sec;
+};
 }  // namespace boreas
 #endif  // BOREADS_NODE_HPP_

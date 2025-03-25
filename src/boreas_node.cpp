@@ -34,14 +34,17 @@ BoreasNode::BoreasNode() : Node("boreas")
   callback_group2_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   callback_group3_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
 
-  // timer1_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function1, this),
-  // callback_group1_); timer2_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function2,
-  // this), callback_group2_);
+  timer1_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function1, this), callback_group1_);
+  timer2_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function2, this), callback_group2_);
   timer3_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function3, this), callback_group3_);
 
-  writer_ = std::make_unique<rosbag2_cpp::Writer>();
+  // writer_ = std::make_unique<rosbag2_cpp::Writer>();
 
-  writer_->open("boreas_bag");
+  // writer_->open("boreas_bag");
+  lidar_data_ready_ = false;
+  camera_data_ready_ = false;
+  done_ = false;
+  init_sec = 1617900271;
 }
 
 void BoreasNode::remove_slash_and_bin(std::string & in)
@@ -231,70 +234,51 @@ bool BoreasNode::load_camera_info()
 
 void BoreasNode::function1()
 {
-  // read lidar data
-  try {
-    for (const auto & entry : fs::directory_iterator(lidar_data_path_)) {
-      std::string frame_path = entry.path().string();
-      std::string frame_path_solid = entry.path().string();
+  if (!lidar_data_ready_) {
+    // read lidar data
+    try {
+      for (const auto & entry : fs::directory_iterator(lidar_data_path_)) {
+        std::string frame_path = entry.path().string();
+        std::string frame_path_solid = entry.path().string();
 
-      long long int frame_no = path_to_int(frame_path);
-      lidar_sorted_[frame_no] = frame_path_solid;
+        long long int frame_no = path_to_int(frame_path);
+        lidar_sorted_[frame_no] = frame_path_solid;
+      }
+    } catch (const fs::filesystem_error & err) {
+      RCLCPP_ERROR_STREAM(get_logger(), "lidar" << err.what());
     }
-  } catch (const fs::filesystem_error & err) {
-    RCLCPP_ERROR_STREAM(get_logger(), "lidar" << err.what());
-  }
-  lidar_sorted_vec_ =
-    std::vector<std::pair<long long, std::string>>(lidar_sorted_.begin(), lidar_sorted_.end());
+    lidar_sorted_vec_ =
+      std::vector<std::pair<long long, std::string>>(lidar_sorted_.begin(), lidar_sorted_.end());
 
-  std::sort(lidar_sorted_vec_.begin(), lidar_sorted_vec_.end());
-  while (rclcpp::ok()) {
-    for (auto frame_set : lidar_sorted_vec_) {
-      std::string lidar_frame_path = frame_set.second;
-      Eigen::MatrixXd pc;
-      load_lidar(lidar_frame_path, pc);
-      sensor_msgs::msg::PointCloud2 pc_msg;
-      pc_msg = eigen_to_pointcloud(pc);
-      std::lock_guard<std::mutex> lock(mtx);  // Automatically locks & unlocks
+    std::sort(lidar_sorted_vec_.begin(), lidar_sorted_vec_.end());
 
-      // lidar_msg_sorted_vec_.push_back(std::make_pair(frame_set.first, pc_msg));
-      // pc_pub_->publish(pc_msg);
-      // camera_info_msg_.header.stamp = now();
-      // camera_info_pub_->publish(camera_info_msg_);
-      // std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
+    RCLCPP_INFO_STREAM(get_logger(), "lidar data prepared");
+    lidar_data_ready_ = true;
   }
-  RCLCPP_INFO_STREAM(get_logger(), "lidar data prepared");
 }
 
 void BoreasNode::function2()
 {
-  // read camera data
-  try {
-    for (const auto & entry : fs::directory_iterator(camera_data_path_)) {
-      std::string frame_path = entry.path().string();
-      std::string frame_path_solid = entry.path().string();
-      long long int frame_no = path_to_int_cam(frame_path);
-      camera_sorted_[frame_no] = frame_path_solid;
+  if (!camera_data_ready_) {
+    // read camera data
+    try {
+      for (const auto & entry : fs::directory_iterator(camera_data_path_)) {
+        std::string frame_path = entry.path().string();
+        std::string frame_path_solid = entry.path().string();
+        long long int frame_no = path_to_int_cam(frame_path);
+        camera_sorted_[frame_no] = frame_path_solid;
+      }
+    } catch (const fs::filesystem_error & err) {
+      RCLCPP_ERROR_STREAM(get_logger(), "camera" << err.what());
     }
-  } catch (const fs::filesystem_error & err) {
-    RCLCPP_ERROR_STREAM(get_logger(), "camera" << err.what());
-  }
-  camera_sorted_vec_ =
-    std::vector<std::pair<long long, std::string>>(camera_sorted_.begin(), camera_sorted_.end());
+    camera_sorted_vec_ =
+      std::vector<std::pair<long long, std::string>>(camera_sorted_.begin(), camera_sorted_.end());
 
-  std::sort(camera_sorted_vec_.begin(), camera_sorted_vec_.end());
-  while (rclcpp::ok()) {
-    for (auto frame_set : camera_sorted_vec_) {
-      std::string camera_frame_path = frame_set.second;
-      sensor_msgs::msg::Image::SharedPtr image_msg;
-      image_msg = read_image(camera_frame_path);
-      image_msg->header.frame_id = "camera";
-      image_msg->header.stamp = now();
-      camera_pub_->publish(*image_msg);
-      std::lock_guard<std::mutex> lock(mtx);  // Automatically locks & unlocks
-    }
+    std::sort(camera_sorted_vec_.begin(), camera_sorted_vec_.end());
+
+    RCLCPP_INFO_STREAM(get_logger(), "camera data prepared");
+    camera_data_ready_ = true;
   }
-  RCLCPP_INFO_STREAM(get_logger(), "camera data prepared");
 }
 
 sensor_msgs::msg::Image::SharedPtr BoreasNode::read_image(std::string & image_path)
@@ -311,22 +295,84 @@ sensor_msgs::msg::Image::SharedPtr BoreasNode::read_image(std::string & image_pa
 
 void BoreasNode::function3()
 {
-  io::CSVReader<2> in("/home/osal/Downloads/boreas-2021-04-08-12-44/applanix/ros_and_gps_time.csv");
-  in.read_header(io::ignore_extra_column, "ROS Time", "GPS Time");
-  long long int ros_time;
-  float gps_time;
-  while (in.read_row(ros_time, gps_time)) {
-    long sec = ros_time / 1'000'000'000;
-    long nanosec = ros_time % 1'000'000'000;
-    rclcpp::Time time(sec, nanosec);
-    rosgraph_msgs::msg::Clock clock_msg;
-    clock_msg.clock = time;
-    auto ser_clock_msg = serialize_message(clock_msg);
-    std::lock_guard<std::mutex> lock(mtx);  // Automatically locks & unlocks
-    writer_->write(
-      std::make_shared<rclcpp::SerializedMessage>(ser_clock_msg), "/clock",
-      "rosgraph_msgs/msg/Clock", time);
+  if (!done_) {
+    if (camera_data_ready_ && lidar_data_ready_) {
+      RCLCPP_INFO_STREAM(get_logger(), "lidar  size:= " << lidar_sorted_vec_.size());
+      RCLCPP_INFO_STREAM(get_logger(), "camera  size:= " << camera_sorted_vec_.size());
+      sync_time_stamps(camera_sorted_vec_, lidar_sorted_vec_);
+      done_ = true;
+    }
   }
+  RCLCPP_INFO_STREAM(get_logger(), "Done");
+
+  // io::CSVReader<2>
+  // in("/home/osal/Downloads/boreas-2021-04-08-12-44/applanix/ros_and_gps_time.csv");
+  // in.read_header(io::ignore_extra_column, "ROS Time", "GPS Time");
+  // long long int ros_time;
+  // float gps_time;
+  // while (in.read_row(ros_time, gps_time)) {
+  //   long sec = ros_time / 1'000'000'000;
+  //   long nanosec = ros_time % 1'000'000'000;
+  //   rclcpp::Time time(sec, nanosec);
+  //   rosgraph_msgs::msg::Clock clock_msg;
+  //   clock_msg.clock = time;
+  //   auto ser_clock_msg = serialize_message(clock_msg);
+  //   std::lock_guard<std::mutex> lock(mtx);  // Automatically locks & unlocks
+  //   writer_->write(
+  //     std::make_shared<rclcpp::SerializedMessage>(ser_clock_msg), "/clock",
+  //     "rosgraph_msgs/msg/Clock", time);
+  // }
+}
+
+void BoreasNode::sync_time_stamps(
+  const std::vector<std::pair<long long int, std::string>> & arr1,
+  const std::vector<std::pair<long long int, std::string>> & arr2)
+{
+  size_t i = 0, j = 0;
+
+  while (i < arr1.size() && j < arr2.size()) {
+    // Extract timestamps
+    long long int t1 = arr1[i].first;
+    long long int t2 = arr2[j].first;
+
+    // Print matched timestamps and their associated values
+    RCLCPP_INFO_STREAM(
+      get_logger(), "Matched: (" << t1 << ")"
+                                 << " with (" << t2 << ")");
+
+    std::string lidar_frame_path = arr2[j].second;
+    Eigen::MatrixXd pc;
+    load_lidar(lidar_frame_path, pc);
+    sensor_msgs::msg::PointCloud2 pc_msg;
+    pc_msg = eigen_to_pointcloud(pc);
+    pc_msg.header.stamp = id_to_stamp(arr2[j].first);
+    pc_pub_->publish(pc_msg);
+
+    std::string camera_frame_path = arr1[i].second;
+    sensor_msgs::msg::Image::SharedPtr image_msg;
+    image_msg = read_image(camera_frame_path);
+    image_msg->header.frame_id = "camera";
+    image_msg->header.stamp = id_to_stamp(arr1[i].first);
+    camera_pub_->publish(*image_msg);
+
+    camera_info_msg_.header.stamp = image_msg->header.stamp;
+    camera_info_pub_->publish(camera_info_msg_);
+
+    // Move the pointer with the smaller timestamp
+    if (t1 < t2) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+}
+
+rclcpp::Time BoreasNode::id_to_stamp(long long int ros_time)
+{
+  long sec = ros_time / 1'000'000'000;
+  long nanosec = ros_time % 1'000'000'000;
+  rclcpp::Time time(sec, nanosec);
+  return time;
 }
 
 template <typename MsgT>
