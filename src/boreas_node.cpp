@@ -302,64 +302,48 @@ void BoreasNode::function3()
       sync_time_stamps(camera_sorted_vec_, lidar_sorted_vec_);
       done_ = true;
     }
+  } else {
+    exit(0);
   }
   RCLCPP_INFO_STREAM(get_logger(), "Done");
-
-  // io::CSVReader<2>
-  // in("/home/osal/Downloads/boreas-2021-04-08-12-44/applanix/ros_and_gps_time.csv");
-  // in.read_header(io::ignore_extra_column, "ROS Time", "GPS Time");
-  // long long int ros_time;
-  // float gps_time;
-  // while (in.read_row(ros_time, gps_time)) {
-  //   long sec = ros_time / 1'000'000'000;
-  //   long nanosec = ros_time % 1'000'000'000;
-  //   rclcpp::Time time(sec, nanosec);
-  //   rosgraph_msgs::msg::Clock clock_msg;
-  //   clock_msg.clock = time;
-  //   auto ser_clock_msg = serialize_message(clock_msg);
-  //   std::lock_guard<std::mutex> lock(mtx);  // Automatically locks & unlocks
-  //   writer_->write(
-  //     std::make_shared<rclcpp::SerializedMessage>(ser_clock_msg), "/clock",
-  //     "rosgraph_msgs/msg/Clock", time);
-  // }
 }
 
 void BoreasNode::sync_time_stamps(
-  const std::vector<std::pair<long long int, std::string>> & arr1,
-  const std::vector<std::pair<long long int, std::string>> & arr2)
+  const std::vector<std::pair<long long int, std::string>> & camera_data,
+  const std::vector<std::pair<long long int, std::string>> & lidar_dat)
 {
   size_t i = 0, j = 0;
 
-  while (i < arr1.size() && j < arr2.size()) {
+  while (i < camera_data.size() && j < lidar_dat.size()) {
     // Extract timestamps
-    long long int t1 = arr1[i].first;
-    long long int t2 = arr2[j].first;
+    long long int time_stamp_camera = camera_data[i].first;
+    long long int time_stamp_lidar = lidar_dat[j].first;
 
     // Print matched timestamps and their associated values
     RCLCPP_INFO_STREAM(
-      get_logger(), "Matched: (" << t1 << ")"
-                                 << " with (" << t2 << ")");
+      get_logger(), "Matched: (" << time_stamp_camera << ")"
+                                 << " with (" << time_stamp_lidar << ")");
 
-    std::string lidar_frame_path = arr2[j].second;
+    std::string lidar_frame_path = lidar_dat[j].second;
     Eigen::MatrixXd pc;
     load_lidar(lidar_frame_path, pc);
     sensor_msgs::msg::PointCloud2 pc_msg;
     pc_msg = eigen_to_pointcloud(pc);
-    pc_msg.header.stamp = id_to_stamp(arr2[j].first);
+    pc_msg.header.stamp = id_to_stamp(lidar_dat[j].first);
     pc_pub_->publish(pc_msg);
 
-    std::string camera_frame_path = arr1[i].second;
+    std::string camera_frame_path = camera_data[i].second;
     sensor_msgs::msg::Image::SharedPtr image_msg;
     image_msg = read_image(camera_frame_path);
     image_msg->header.frame_id = "camera";
-    image_msg->header.stamp = id_to_stamp(arr1[i].first);
+    image_msg->header.stamp = id_to_stamp(camera_data[i].first);
     camera_pub_->publish(*image_msg);
 
     camera_info_msg_.header.stamp = image_msg->header.stamp;
     camera_info_pub_->publish(camera_info_msg_);
 
     // Move the pointer with the smaller timestamp
-    if (t1 < t2) {
+    if (time_stamp_camera < time_stamp_lidar) {
       i++;
     } else {
       j++;

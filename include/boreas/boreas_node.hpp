@@ -37,8 +37,8 @@ private:
   void publish_transform_op(std::string & path);
   bool load_camera_info();
   void sync_time_stamps(
-    const std::vector<std::pair<long long int, std::string>> & arr1,
-    const std::vector<std::pair<long long int, std::string>> & arr2);
+    const std::vector<std::pair<long long int, std::string>> & camera_data,
+    const std::vector<std::pair<long long int, std::string>> & lidar_dat);
 
   rclcpp::Time id_to_stamp(long long int ros_time);
 
