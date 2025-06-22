@@ -15,8 +15,9 @@ using namespace std::chrono_literals;
 
 BoreasNode::BoreasNode() : Node("boreas")
 {
+  auto lidar_topic_name = declare_parameter<std::string>("lidar_topic_name");
   data_path_ = declare_parameter<std::string>("data_path");
-  pc_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>("~/pointcloud", 10);
+  pc_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(lidar_topic_name, 10);
   camera_pub_ = create_publisher<sensor_msgs::msg::Image>("~/image", 10);
   camera_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>("~/camera_info", 10);
   clock_pub_ = this->create_publisher<rosgraph_msgs::msg::Clock>("/clock", 10);

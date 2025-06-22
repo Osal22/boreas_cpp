@@ -2,10 +2,14 @@
 <launch>
     <arg name="config" default="$(find-pkg-share boreas)/config/boreas.yaml"/>
     <arg name="data_path" default="/home/$(env USER)/Downloads/boreas-2021-04-08-12-44"/>
+    <arg name="lidar_topic_name" default="/sensing/lidar/concatenated/pointcloud"/>
+    <arg name="camera_topic_name" default=""/>
+    <arg name="caemra_info_topic_name" default=""/>
 
 <!-- launch-prefix="xterm -e gdb args" -->
     <node pkg="boreas" exec="boreas" name="boreas" >
         <param name="data_path" value="$(var data_path)"/>
+        <param name="lidar_topic_name" value="$(var lidar_topic_name)"/>
         <param from="$(var config)"/>
     </node>
 
