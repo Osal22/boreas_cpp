@@ -181,8 +181,8 @@ void BoreasNode::publish_transform(const std::vector<std::vector<double>> & matr
 
   geometry_msgs::msg::TransformStamped transform;
   transform.header.stamp = now();
-  transform.header.frame_id = "camera";
-  transform.child_frame_id = "lidar";
+  transform.header.frame_id = "lidar";
+  transform.child_frame_id = "camera";
 
   // Translation (last column of the matrix)
   transform.transform.translation.x = matrix[0][3];
@@ -193,7 +193,7 @@ void BoreasNode::publish_transform(const std::vector<std::vector<double>> & matr
   Eigen::Matrix3d rotation_matrix;
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++) rotation_matrix(i, j) = matrix[i][j];
-
+  rotation_matrix = rotation_matrix.inverse();
   Eigen::Quaterniond quat(rotation_matrix);
   transform.transform.rotation.x = quat.x();
   transform.transform.rotation.y = quat.y();
