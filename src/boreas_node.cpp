@@ -5,6 +5,7 @@
 
 #include <boreas/csv.h>
 #include <cv_bridge/cv_bridge.h>
+#include <tf2/LinearMath/Quaternion.h>
 
 #include <chrono>
 #include <regex>
@@ -26,6 +27,7 @@ BoreasNode::BoreasNode() : Node("boreas")
 
   lidar_data_path_ = data_path_ + "/lidar";
   camera_data_path_ = data_path_ + "/camera";
+  gps_data_path_ = data_path_ + "/applanix";
   camera_to_lidar_ = data_path_ + "/calib/T_camera_lidar.txt";
 
   publish_transform_op(camera_to_lidar_);
@@ -34,10 +36,12 @@ BoreasNode::BoreasNode() : Node("boreas")
   callback_group1_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   callback_group2_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   callback_group3_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  callback_group4_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
 
   timer1_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function1, this), callback_group1_);
   timer2_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function2, this), callback_group2_);
   timer3_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function3, this), callback_group3_);
+  timer4_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function4, this), callback_group4_);
 
   // writer_ = std::make_unique<rosbag2_cpp::Writer>();
 
@@ -179,7 +183,7 @@ void BoreasNode::publish_transform(const std::vector<std::vector<double>> & matr
     return;
   }
 
-  geometry_msgs::msg::TransformStamped transform;
+  geometry_msgs::msg::TransformStamped transform, transform_bl;
   transform.header.stamp = now();
   transform.header.frame_id = "lidar";
   transform.child_frame_id = "camera";
@@ -199,9 +203,22 @@ void BoreasNode::publish_transform(const std::vector<std::vector<double>> & matr
   transform.transform.rotation.y = quat.y();
   transform.transform.rotation.z = quat.z();
   transform.transform.rotation.w = quat.w();
-
   static_broadcaster_->sendTransform(transform);
   RCLCPP_INFO(this->get_logger(), "Published static transform.");
+
+  tf2::Quaternion q;
+  double yaw = M_PI / -4;
+  q.setRPY(0, 0, yaw);  // roll, pitch, yaw
+  transform_bl.transform.translation.z = 2.1;
+  transform_bl.transform.rotation.x = q.x();
+  transform_bl.transform.rotation.y = q.y();
+  transform_bl.transform.rotation.z = q.z();
+  transform_bl.transform.rotation.w = q.w();
+
+  transform_bl.header.stamp = now();
+  transform_bl.header.frame_id = "base_link";
+  transform_bl.child_frame_id = "lidar";
+  static_broadcaster_->sendTransform(transform_bl);
 }
 
 void BoreasNode::publish_transform_op(std::string & path)
@@ -309,6 +326,10 @@ void BoreasNode::function3()
   RCLCPP_INFO_STREAM(get_logger(), "Done");
 }
 
+void BoreasNode::function4()
+{
+}
+
 void BoreasNode::sync_time_stamps(
   const std::vector<std::pair<long long int, std::string>> & camera_data,
   const std::vector<std::pair<long long int, std::string>> & lidar_dat)
@@ -321,7 +342,7 @@ void BoreasNode::sync_time_stamps(
     long long int time_stamp_lidar = lidar_dat[j].first;
 
     // Print matched timestamps and their associated values
-    RCLCPP_INFO_STREAM(
+    RCLCPP_DEBUG_STREAM(
       get_logger(), "Matched: (" << time_stamp_camera << ")"
                                  << " with (" << time_stamp_lidar << ")");
 

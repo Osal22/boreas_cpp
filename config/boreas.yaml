@@ -14,3 +14,10 @@
     tangential_distortion: [0.000000,0.000000]
     skew: 0.000000
     roi: [0,0,2447,2047]
+    # tf info
+    base_link_to_lidar:
+      translation: [0.000, 0.000, 2.100]
+      rotation: [0.000, 0.000, -0.383, 0.924]
+    base_link_to_camera:
+        translation: [-0.179, -0.146, 1.465]
+        rotation: [-0.512, 0.497, -0.487, 0.503]

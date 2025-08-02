@@ -45,6 +45,7 @@ private:
   void function1();
   void function2();
   void function3();
+  void function4();
 
   template <typename MsgT>
   rclcpp::SerializedMessage serialize_message(const MsgT & msg);
@@ -52,7 +53,9 @@ private:
   std::string data_path_;
   std::string lidar_data_path_;
   std::string camera_data_path_;
+  std::string gps_data_path_;
   std::string camera_to_lidar_;
+
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pc_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr camera_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub_;
@@ -64,10 +67,12 @@ private:
   rclcpp::TimerBase::SharedPtr timer1_;
   rclcpp::TimerBase::SharedPtr timer2_;
   rclcpp::TimerBase::SharedPtr timer3_;
+  rclcpp::TimerBase::SharedPtr timer4_;
 
   rclcpp::CallbackGroup::SharedPtr callback_group1_;
   rclcpp::CallbackGroup::SharedPtr callback_group2_;
   rclcpp::CallbackGroup::SharedPtr callback_group3_;
+  rclcpp::CallbackGroup::SharedPtr callback_group4_;
 
   std::unordered_map<long long int, std::string> camera_sorted_;
   std::vector<std::pair<long long int, std::string>> camera_sorted_vec_;
