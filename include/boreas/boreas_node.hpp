@@ -9,6 +9,7 @@
 #include <rosgraph_msgs/msg/clock.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
 #include <tf2_ros/static_transform_broadcaster.h>
@@ -60,6 +61,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr camera_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub_;
   rclcpp::Publisher<rosgraph_msgs::msg::Clock>::SharedPtr clock_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr nav_sat_fix_pub_;
 
   std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_broadcaster_;
 

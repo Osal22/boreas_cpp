@@ -22,14 +22,14 @@ BoreasNode::BoreasNode() : Node("boreas")
   camera_pub_ = create_publisher<sensor_msgs::msg::Image>("~/image", 10);
   camera_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>("~/camera_info", 10);
   clock_pub_ = this->create_publisher<rosgraph_msgs::msg::Clock>("/clock", 10);
+  nav_sat_fix_pub_ = create_publisher<sensor_msgs::msg::NavSatFix>("nav_sat_fix", 10);
 
   static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
   lidar_data_path_ = data_path_ + "/lidar";
   camera_data_path_ = data_path_ + "/camera";
-  gps_data_path_ = data_path_ + "/applanix";
+  gps_data_path_ = data_path_ + "/applanix/gps_post_process.csv";
   camera_to_lidar_ = data_path_ + "/calib/T_camera_lidar.txt";
-
   publish_transform_op(camera_to_lidar_);
   load_camera_info();
 
@@ -328,6 +328,35 @@ void BoreasNode::function3()
 
 void BoreasNode::function4()
 {
+  auto gps_csv_reader = io::CSVReader<18>(gps_data_path_);
+  /* GPSTime,easting,northing,altitude,vel_east,vel_north,
+  vel_up,roll,pitch,heading,angvel_z,angvel_y,angvel_x,accelz,accely,
+  accelx,latitude,longitude
+   */
+  gps_csv_reader.read_header(
+    io::ignore_extra_column, "GPSTime", "easting", "northing", "altitude", "vel_east", "vel_north",
+    "vel_up", "roll", "pitch", "heading", "angvel_z", "angvel_y", "angvel_x", "accelz", "accely",
+    "accelx", "latitude", "longitude");
+  double GPSTime, easting, northing, altitude, vel_east, vel_north, vel_up, roll, pitch, heading,
+    angvel_z, angvel_y, angvel_x, accelz, accely, accelx, latitude, longitude;
+  while (gps_csv_reader.read_row(
+           GPSTime, easting, northing, altitude, vel_east, vel_north, vel_up, roll, pitch, heading,
+           angvel_z, angvel_y, angvel_x, accelz, accely, accelx, latitude, longitude) &&
+         rclcpp::ok()) {
+    // RCLCPP_INFO_STREAM(
+    //   get_logger(), "GPSTime:= " << GPSTime << " lat:= " << latitude * 180 / M_PI
+    //                              << " lon:= " << longitude * 180 / M_PI);
+    auto lat = latitude * 180 / M_PI;
+    auto lon = longitude * 180 / M_PI;
+    sensor_msgs::msg::NavSatFix navsatfix_msg;
+    navsatfix_msg.header.frame_id = "base_link";
+    navsatfix_msg.header.stamp = now();
+    navsatfix_msg.latitude = lat;
+    navsatfix_msg.longitude = lon;
+    navsatfix_msg.altitude = altitude;
+    nav_sat_fix_pub_->publish(navsatfix_msg);
+    std::this_thread::sleep_for(0.0025s);
+  }
 }
 
 void BoreasNode::sync_time_stamps(
