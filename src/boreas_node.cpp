@@ -1,10 +1,10 @@
 #include <Eigen/Dense>
 #include <boreas/boreas_node.hpp>
+#include <cv_bridge/cv_bridge.hpp>
 
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 #include <boreas/csv.h>
-#include <cv_bridge/cv_bridge.h>
 
 #include <chrono>
 #include <regex>
