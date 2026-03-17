@@ -314,13 +314,13 @@ void BoreasNode::sync_time_stamps(
 {
   size_t i = 0, j = 0;
 
-  while (i < camera_data.size() && j < lidar_dat.size()) {
+  while (i < camera_data.size() && j < lidar_dat.size() && rclcpp::ok()) {
     // Extract timestamps
     long long int time_stamp_camera = camera_data[i].first;
     long long int time_stamp_lidar = lidar_dat[j].first;
 
     // Print matched timestamps and their associated values
-    RCLCPP_INFO_STREAM(
+    RCLCPP_DEBUG_STREAM(
       get_logger(), "Matched: (" << time_stamp_camera << ")"
                                  << " with (" << time_stamp_lidar << ")");
 
@@ -355,7 +355,7 @@ rclcpp::Time BoreasNode::id_to_stamp(long long int ros_time)
 {
   long sec = ros_time / 1'000'000'000;
   long nanosec = ros_time % 1'000'000'000;
-  rclcpp::Time time(sec, nanosec);
+  rclcpp::Time time(static_cast<int32_t>(sec), static_cast<int32_t>(nanosec));
   return time;
 }
 
