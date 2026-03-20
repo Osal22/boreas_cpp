@@ -19,6 +19,11 @@
 namespace boreas
 {
 typedef long long int l_int;
+
+struct ImuData
+{
+  double GPSTime, angvel_z, angvel_y, angvel_x, accelz, accely, accelx;
+};
 class BoreasNode : public rclcpp::Node
 {
 public:
@@ -49,7 +54,9 @@ private:
 
   void write_camera_data(const long long int id, std::string camera_frame_path);
   void write_lidar_data(const long long int id, std::string lidar_frame_path);
-  void clock_data();
+  void clock_data(const rclcpp::Time & time_gps);
+  bool imu_read_row(ImuData & imu_data);
+  void write_imu_data(const ImuData & imu_data, const rclcpp::Time & time_imu);
 
   template <typename MsgT>
   rclcpp::SerializedMessage serialize_message(const MsgT & msg);

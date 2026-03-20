@@ -2,6 +2,7 @@
 #include <boreas/boreas_node.hpp>
 #include <cv_bridge/cv_bridge.hpp>
 
+#include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 #include <chrono>
@@ -89,7 +90,7 @@ long long int BoreasNode::path_to_int(std::string & in)
     remove_slash_and_bin(match_str);
     number = std::stoll(match_str);
   } else {
-    RCLCPP_INFO_STREAM(get_logger(), "no match is found");
+    RCLCPP_DEBUG_STREAM(get_logger(), "no match is found");
     return 0;
   }
   return number;
@@ -106,7 +107,7 @@ long long int BoreasNode::path_to_int_cam(std::string & in)
     remove_slash_and_bin(match_str);
     number = std::stoll(match_str);
   } else {
-    RCLCPP_INFO_STREAM(get_logger(), "no match is found");
+    RCLCPP_DEBUG_STREAM(get_logger(), "no match is found");
     return 0;
   }
   return number;
@@ -315,7 +316,7 @@ void BoreasNode::function3()
   } else {
     exit(0);
   }
-  RCLCPP_INFO_STREAM(get_logger(), "Done");
+  RCLCPP_DEBUG_STREAM(get_logger(), "Done");
 }
 
 void BoreasNode::sync_time_stamps(
@@ -323,33 +324,61 @@ void BoreasNode::sync_time_stamps(
   const std::vector<std::pair<long long int, std::string>> & lidar_dat)
 {
   size_t i = 0, j = 0;
-  double raw_csv_time_seconds;
+  double raw_csv_clock_sec;
   long long int pulse_count;
-  bool has_csv = csv_reader_ptr_->read_row(raw_csv_time_seconds, pulse_count);
-  while ((i < camera_data.size() || j < lidar_dat.size()) && rclcpp::ok()) {
-    long long int t_cam_ns = (i < camera_data.size()) ? camera_data[i].first * 1000 : LLONG_MAX;
-    long long int t_lidar_ns = (j < lidar_dat.size()) ? lidar_dat[j].first * 1000 : LLONG_MAX;
-    long long int current_sensor_ns = std::min(t_cam_ns, t_lidar_ns);
-    while (has_csv) {
-      long long int gps_ns = static_cast<long long int>(raw_csv_time_seconds * 1e9);
-      if (gps_ns > current_sensor_ns) break;
-      rclcpp::Time time_gps(gps_ns / 1000000000, gps_ns % 1000000000);
-      rosgraph_msgs::msg::Clock clock_msg;
-      clock_msg.clock = time_gps;
-      auto ser_clock = serialize_message(clock_msg);
-      writer_->write(
-        std::make_shared<rclcpp::SerializedMessage>(ser_clock), "/clock", "rosgraph_msgs/msg/Clock",
-        time_gps);
-      has_csv = csv_reader_ptr_->read_row(raw_csv_time_seconds, pulse_count);
-    }
-    if (t_cam_ns <= t_lidar_ns && i < camera_data.size()) {
-      write_camera_data(t_cam_ns, camera_data[i].second);
+  ImuData imu_data;
+  bool has_clock = csv_reader_ptr_->read_row(raw_csv_clock_sec, pulse_count);
+  bool has_imu = imu_read_row(imu_data);
+  while (rclcpp::ok()) {
+    long long int t_cam = (i < camera_data.size()) ? camera_data[i].first * 1000 : LLONG_MAX;
+    long long int t_lid = (j < lidar_dat.size()) ? lidar_dat[j].first * 1000 : LLONG_MAX;
+    long long int t_clk =
+      (has_clock) ? static_cast<long long int>(raw_csv_clock_sec * 1e9) : LLONG_MAX;
+    long long int t_imu =
+      (has_imu) ? static_cast<long long int>(imu_data.GPSTime * 1e9) : LLONG_MAX;
+    long long int t_min = std::min({t_cam, t_lid, t_clk, t_imu});
+    if (t_min == LLONG_MAX) break;
+    if (t_min == t_clk) {
+      rclcpp::Time stamp(t_clk / 1000000000, t_clk % 1000000000);
+      clock_data(stamp);
+      has_clock = csv_reader_ptr_->read_row(raw_csv_clock_sec, pulse_count);
+    } else if (t_min == t_imu) {
+      rclcpp::Time stamp(t_imu / 1000000000, t_imu % 1000000000);
+      write_imu_data(imu_data, stamp);
+      has_imu = imu_read_row(imu_data);
+    } else if (t_min == t_cam) {
+      write_camera_data(t_cam, camera_data[i].second);
       i++;
-    } else if (j < lidar_dat.size()) {
-      write_lidar_data(t_lidar_ns, lidar_dat[j].second);
+    } else if (t_min == t_lid) {
+      write_lidar_data(t_lid, lidar_dat[j].second);
       j++;
     }
   }
+
+  RCLCPP_INFO(get_logger(), "Strict 4-way sync complete.");
+}
+
+void BoreasNode::write_imu_data(const ImuData & imu_data, const rclcpp::Time & time_imu)
+{
+  sensor_msgs::msg::Imu imu_msg;
+  imu_msg.header.stamp = time_imu;
+  imu_msg.header.frame_id = "imu";
+  imu_msg.angular_velocity.x = imu_data.angvel_x;
+  imu_msg.angular_velocity.y = imu_data.angvel_y;
+  imu_msg.angular_velocity.z = imu_data.angvel_z;
+  imu_msg.linear_acceleration.x = imu_data.accelx;
+  imu_msg.linear_acceleration.y = imu_data.accely;
+  imu_msg.linear_acceleration.z = imu_data.accelz;
+  auto ser_imu = serialize_message(imu_msg);
+  writer_->write(
+    std::make_shared<rclcpp::SerializedMessage>(ser_imu), "/imu", "sensor_msgs/msg/Imu", time_imu);
+}
+
+bool BoreasNode::imu_read_row(ImuData & imu_data)
+{
+  return imu_reader_ptr_->read_row(
+    imu_data.GPSTime, imu_data.angvel_z, imu_data.angvel_y, imu_data.angvel_x, imu_data.accelz,
+    imu_data.accely, imu_data.accelx);
 }
 
 void BoreasNode::write_camera_data(const long long int id, std::string camera_frame_path)
@@ -366,7 +395,7 @@ void BoreasNode::write_camera_data(const long long int id, std::string camera_fr
     writer_->write(
       std::make_shared<rclcpp::SerializedMessage>(ser_image_msg), "/camera_image",
       "sensor_msgs/msg/Image", time_image);
-    RCLCPP_INFO_STREAM(get_logger(), "writing image nanoseconds:= " << time_image.nanoseconds());
+    RCLCPP_DEBUG_STREAM(get_logger(), "writing image nanoseconds:= " << time_image.nanoseconds());
 
     camera_info_msg_->header.stamp = image_msg->header.stamp;
     // camera_info_pub_->publish(camera_info_msg_);
@@ -393,13 +422,19 @@ void BoreasNode::write_lidar_data(const long long int id, std::string lidar_fram
     writer_->write(
       std::make_shared<rclcpp::SerializedMessage>(ser_pc_msg), "/point_cloud",
       "sensor_msgs/msg/PointCloud2", time_pc);
-    RCLCPP_INFO_STREAM(get_logger(), "writing pc nanoseconds:=      " << time_pc.nanoseconds());
+    RCLCPP_DEBUG_STREAM(get_logger(), "writing pc nanoseconds:=   " << time_pc.nanoseconds());
   } else {
     prev_lidar_id_ = id;
   }
 }
-void BoreasNode::clock_data()
+void BoreasNode::clock_data(const rclcpp::Time & time_gps)
 {
+  rosgraph_msgs::msg::Clock clock_msg;
+  clock_msg.clock = time_gps;
+  auto ser_clock = serialize_message(clock_msg);
+  writer_->write(
+    std::make_shared<rclcpp::SerializedMessage>(ser_clock), "/clock", "rosgraph_msgs/msg/Clock",
+    time_gps);
 }
 
 rclcpp::Time BoreasNode::id_to_stamp(long long int ros_time)
