@@ -60,7 +60,7 @@ private:
 
   std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_broadcaster_;
 
-  sensor_msgs::msg::CameraInfo camera_info_msg_;
+  sensor_msgs::msg::CameraInfo::SharedPtr camera_info_msg_;
   rclcpp::TimerBase::SharedPtr timer1_;
   rclcpp::TimerBase::SharedPtr timer2_;
   rclcpp::TimerBase::SharedPtr timer3_;

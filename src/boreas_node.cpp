@@ -16,6 +16,7 @@ using namespace std::chrono_literals;
 BoreasNode::BoreasNode() : Node("boreas")
 {
   data_path_ = declare_parameter<std::string>("data_path");
+  RCLCPP_INFO_STREAM(get_logger(), "data_path_:= " << data_path_);
   pc_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>("~/pointcloud", 10);
   camera_pub_ = create_publisher<sensor_msgs::msg::Image>("~/image", 10);
   camera_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>("~/camera_info", 10);
@@ -28,6 +29,8 @@ BoreasNode::BoreasNode() : Node("boreas")
   camera_to_lidar_ = data_path_ + "/calib/T_camera_lidar.txt";
 
   publish_transform_op(camera_to_lidar_);
+  camera_info_msg_ = std::make_shared<sensor_msgs::msg::CameraInfo>();
+
   load_camera_info();
 
   callback_group1_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
@@ -38,9 +41,9 @@ BoreasNode::BoreasNode() : Node("boreas")
   timer2_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function2, this), callback_group2_);
   timer3_ = this->create_wall_timer(1s, std::bind(&BoreasNode::function3, this), callback_group3_);
 
-  // writer_ = std::make_unique<rosbag2_cpp::Writer>();
+  writer_ = std::make_unique<rosbag2_cpp::Writer>();
 
-  // writer_->open("boreas_bag");
+  writer_->open("boreas_bag");
   lidar_data_ready_ = false;
   camera_data_ready_ = false;
   done_ = false;
@@ -210,24 +213,24 @@ void BoreasNode::publish_transform_op(std::string & path)
 
 bool BoreasNode::load_camera_info()
 {
-  camera_info_msg_.header.frame_id = "camera";  // Change as needed
-  camera_info_msg_.header.stamp = now();
+  camera_info_msg_->header.frame_id = "camera";  // Change as needed
+  camera_info_msg_->header.stamp = now();
   // Image size
-  camera_info_msg_.width = declare_parameter<int>("width");
-  camera_info_msg_.height = declare_parameter<int>("height");
+  camera_info_msg_->width = declare_parameter<int>("width");
+  camera_info_msg_->height = declare_parameter<int>("height");
   // Intrinsic matrix (K)
-  camera_info_msg_.k[0] = declare_parameter<double>("k0");  // fx
-  camera_info_msg_.k[2] = declare_parameter<double>("k2");  // cx
-  camera_info_msg_.k[4] = declare_parameter<double>("k4");  // fy
-  camera_info_msg_.k[5] = declare_parameter<double>("k5");  // cy
-  camera_info_msg_.k[8] = 1.0;                              // Identity
+  camera_info_msg_->k[0] = declare_parameter<double>("k0");  // fx
+  camera_info_msg_->k[2] = declare_parameter<double>("k2");  // cx
+  camera_info_msg_->k[4] = declare_parameter<double>("k4");  // fy
+  camera_info_msg_->k[5] = declare_parameter<double>("k5");  // cy
+  camera_info_msg_->k[8] = 1.0;                              // Identity
 
   // Projection matrix (P)
-  camera_info_msg_.p[0] = camera_info_msg_.k[0];  // fx
-  camera_info_msg_.p[2] = camera_info_msg_.k[2];  // cx
-  camera_info_msg_.p[5] = camera_info_msg_.k[4];  // fy
-  camera_info_msg_.p[6] = camera_info_msg_.k[5];  // cy
-  camera_info_msg_.p[10] = 1.0;
+  camera_info_msg_->p[0] = camera_info_msg_->k[0];  // fx
+  camera_info_msg_->p[2] = camera_info_msg_->k[2];  // cx
+  camera_info_msg_->p[5] = camera_info_msg_->k[4];  // fy
+  camera_info_msg_->p[6] = camera_info_msg_->k[5];  // cy
+  camera_info_msg_->p[10] = 1.0;
 
   return true;
 }
@@ -330,17 +333,34 @@ void BoreasNode::sync_time_stamps(
     sensor_msgs::msg::PointCloud2 pc_msg;
     pc_msg = eigen_to_pointcloud(pc);
     pc_msg.header.stamp = id_to_stamp(lidar_dat[j].first);
-    pc_pub_->publish(pc_msg);
+    // pc_pub_->publish(pc_msg);
+    auto ser_pc_msg = serialize_message(pc_msg);
+    auto time_pc = id_to_stamp(lidar_dat[j].first);
+
+    writer_->write(
+      std::make_shared<rclcpp::SerializedMessage>(ser_pc_msg), "/point_cloud",
+      "sensor_msgs/msg/PointCloud2", time_pc);
 
     std::string camera_frame_path = camera_data[i].second;
     sensor_msgs::msg::Image::SharedPtr image_msg;
     image_msg = read_image(camera_frame_path);
     image_msg->header.frame_id = "camera";
     image_msg->header.stamp = id_to_stamp(camera_data[i].first);
-    camera_pub_->publish(*image_msg);
+    // camera_pub_->publish(*image_msg);
+    auto ser_image_msg = serialize_message(*image_msg);
+    auto time_image = id_to_stamp(camera_data[j].first);
 
-    camera_info_msg_.header.stamp = image_msg->header.stamp;
-    camera_info_pub_->publish(camera_info_msg_);
+    writer_->write(
+      std::make_shared<rclcpp::SerializedMessage>(ser_image_msg), "/camera_image",
+      "sensor_msgs/msg/Image", time_image);
+
+    camera_info_msg_->header.stamp = image_msg->header.stamp;
+    // camera_info_pub_->publish(camera_info_msg_);
+    auto ser_cam_info_msg = serialize_message(*camera_info_msg_);
+
+    writer_->write(
+      std::make_shared<rclcpp::SerializedMessage>(ser_cam_info_msg), "/camera_info",
+      "sensor_msgs/msg/CameraInfo", time_image);
 
     // Move the pointer with the smaller timestamp
     if (time_stamp_camera < time_stamp_lidar) {
