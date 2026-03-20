@@ -4,8 +4,6 @@
 
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
-#include <boreas/csv.h>
-
 #include <chrono>
 #include <regex>
 #include <thread>
@@ -27,6 +25,8 @@ BoreasNode::BoreasNode() : Node("boreas")
   lidar_data_path_ = data_path_ + "/lidar";
   camera_data_path_ = data_path_ + "/camera";
   camera_to_lidar_ = data_path_ + "/calib/T_camera_lidar.txt";
+  std::string dmi_path = data_path_ + "/applanix/dmi.csv";
+  std::string imu_path = data_path_ + "/applanix/imu_raw.csv";
 
   publish_transform_op(camera_to_lidar_);
   camera_info_msg_ = std::make_shared<sensor_msgs::msg::CameraInfo>();
@@ -43,11 +43,18 @@ BoreasNode::BoreasNode() : Node("boreas")
 
   writer_ = std::make_unique<rosbag2_cpp::Writer>();
 
-  writer_->open("boreas_bag");
   lidar_data_ready_ = false;
   camera_data_ready_ = false;
   done_ = false;
-  init_sec = 1617900271;
+  csv_reader_ptr_ = std::make_shared<io::CSVReader<2>>(dmi_path);
+  csv_reader_ptr_->read_header(io::ignore_extra_column, "GPSTime", "pulse_count");
+
+  imu_reader_ptr_ = std::make_shared<io::CSVReader<7>>(imu_path);
+  imu_reader_ptr_->read_header(
+    io::ignore_extra_column, "GPSTime", "angvel_z", "angvel_y", "angvel_x", "accelz", "accely",
+    "accelx");
+
+  writer_->open("boreas_bag");
 }
 
 void BoreasNode::remove_slash_and_bin(std::string & in)
@@ -316,43 +323,50 @@ void BoreasNode::sync_time_stamps(
   const std::vector<std::pair<long long int, std::string>> & lidar_dat)
 {
   size_t i = 0, j = 0;
+  double raw_csv_time_seconds;
+  long long int pulse_count;
+  bool has_csv = csv_reader_ptr_->read_row(raw_csv_time_seconds, pulse_count);
+  while ((i < camera_data.size() || j < lidar_dat.size()) && rclcpp::ok()) {
+    long long int t_cam_ns = (i < camera_data.size()) ? camera_data[i].first * 1000 : LLONG_MAX;
+    long long int t_lidar_ns = (j < lidar_dat.size()) ? lidar_dat[j].first * 1000 : LLONG_MAX;
+    long long int current_sensor_ns = std::min(t_cam_ns, t_lidar_ns);
+    while (has_csv) {
+      long long int gps_ns = static_cast<long long int>(raw_csv_time_seconds * 1e9);
+      if (gps_ns > current_sensor_ns) break;
+      rclcpp::Time time_gps(gps_ns / 1000000000, gps_ns % 1000000000);
+      rosgraph_msgs::msg::Clock clock_msg;
+      clock_msg.clock = time_gps;
+      auto ser_clock = serialize_message(clock_msg);
+      writer_->write(
+        std::make_shared<rclcpp::SerializedMessage>(ser_clock), "/clock", "rosgraph_msgs/msg/Clock",
+        time_gps);
+      has_csv = csv_reader_ptr_->read_row(raw_csv_time_seconds, pulse_count);
+    }
+    if (t_cam_ns <= t_lidar_ns && i < camera_data.size()) {
+      write_camera_data(t_cam_ns, camera_data[i].second);
+      i++;
+    } else if (j < lidar_dat.size()) {
+      write_lidar_data(t_lidar_ns, lidar_dat[j].second);
+      j++;
+    }
+  }
+}
 
-  while (i < camera_data.size() && j < lidar_dat.size() && rclcpp::ok()) {
-    // Extract timestamps
-    long long int time_stamp_camera = camera_data[i].first;
-    long long int time_stamp_lidar = lidar_dat[j].first;
-
-    // Print matched timestamps and their associated values
-    RCLCPP_DEBUG_STREAM(
-      get_logger(), "Matched: (" << time_stamp_camera << ")"
-                                 << " with (" << time_stamp_lidar << ")");
-
-    std::string lidar_frame_path = lidar_dat[j].second;
-    Eigen::MatrixXd pc;
-    load_lidar(lidar_frame_path, pc);
-    sensor_msgs::msg::PointCloud2 pc_msg;
-    pc_msg = eigen_to_pointcloud(pc);
-    pc_msg.header.stamp = id_to_stamp(lidar_dat[j].first);
-    // pc_pub_->publish(pc_msg);
-    auto ser_pc_msg = serialize_message(pc_msg);
-    auto time_pc = id_to_stamp(lidar_dat[j].first);
-
-    writer_->write(
-      std::make_shared<rclcpp::SerializedMessage>(ser_pc_msg), "/point_cloud",
-      "sensor_msgs/msg/PointCloud2", time_pc);
-
-    std::string camera_frame_path = camera_data[i].second;
+void BoreasNode::write_camera_data(const long long int id, std::string camera_frame_path)
+{
+  if (prev_camera_id_ != id) {
     sensor_msgs::msg::Image::SharedPtr image_msg;
     image_msg = read_image(camera_frame_path);
     image_msg->header.frame_id = "camera";
-    image_msg->header.stamp = id_to_stamp(camera_data[i].first);
+    image_msg->header.stamp = id_to_stamp(id);
     // camera_pub_->publish(*image_msg);
     auto ser_image_msg = serialize_message(*image_msg);
-    auto time_image = id_to_stamp(camera_data[j].first);
+    auto time_image = id_to_stamp(id);
 
     writer_->write(
       std::make_shared<rclcpp::SerializedMessage>(ser_image_msg), "/camera_image",
       "sensor_msgs/msg/Image", time_image);
+    RCLCPP_INFO_STREAM(get_logger(), "writing image nanoseconds:= " << time_image.nanoseconds());
 
     camera_info_msg_->header.stamp = image_msg->header.stamp;
     // camera_info_pub_->publish(camera_info_msg_);
@@ -361,14 +375,31 @@ void BoreasNode::sync_time_stamps(
     writer_->write(
       std::make_shared<rclcpp::SerializedMessage>(ser_cam_info_msg), "/camera_info",
       "sensor_msgs/msg/CameraInfo", time_image);
-
-    // Move the pointer with the smaller timestamp
-    if (time_stamp_camera < time_stamp_lidar) {
-      i++;
-    } else {
-      j++;
-    }
+  } else {
+    prev_camera_id_ = id;
   }
+}
+void BoreasNode::write_lidar_data(const long long int id, std::string lidar_frame_path)
+{
+  if (prev_lidar_id_ != id) {
+    Eigen::MatrixXd pc;
+    load_lidar(lidar_frame_path, pc);
+    sensor_msgs::msg::PointCloud2 pc_msg;
+    pc_msg = eigen_to_pointcloud(pc);
+    pc_msg.header.stamp = id_to_stamp(id);
+    // pc_pub_->publish(pc_msg);
+    auto ser_pc_msg = serialize_message(pc_msg);
+    auto time_pc = id_to_stamp(id);
+    writer_->write(
+      std::make_shared<rclcpp::SerializedMessage>(ser_pc_msg), "/point_cloud",
+      "sensor_msgs/msg/PointCloud2", time_pc);
+    RCLCPP_INFO_STREAM(get_logger(), "writing pc nanoseconds:=      " << time_pc.nanoseconds());
+  } else {
+    prev_lidar_id_ = id;
+  }
+}
+void BoreasNode::clock_data()
+{
 }
 
 rclcpp::Time BoreasNode::id_to_stamp(long long int ros_time)

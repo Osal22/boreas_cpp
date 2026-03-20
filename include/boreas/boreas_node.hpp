@@ -11,6 +11,7 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
+#include <boreas/csv.h>
 #include <tf2_ros/static_transform_broadcaster.h>
 
 #include <mutex>
@@ -45,6 +46,10 @@ private:
   void function1();
   void function2();
   void function3();
+
+  void write_camera_data(const long long int id, std::string camera_frame_path);
+  void write_lidar_data(const long long int id, std::string lidar_frame_path);
+  void clock_data();
 
   template <typename MsgT>
   rclcpp::SerializedMessage serialize_message(const MsgT & msg);
@@ -84,6 +89,11 @@ private:
   std::mutex mtx;  // Mutex for synchronization
   bool lidar_data_ready_, camera_data_ready_, done_;
   long long int init_sec;
+
+  std::shared_ptr<io::CSVReader<2>> csv_reader_ptr_;
+  std::shared_ptr<io::CSVReader<7>> imu_reader_ptr_;
+  long long int prev_lidar_id_ = 0;
+  long long int prev_camera_id_ = 0;
 };
 }  // namespace boreas
 #endif  // BOREADS_NODE_HPP_
