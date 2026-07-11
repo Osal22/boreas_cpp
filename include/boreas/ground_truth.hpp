@@ -8,6 +8,13 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 
+#include <autoware/geography_utils/height.hpp>
+#include <autoware/geography_utils/projection.hpp>
+#include <autoware_map_msgs/msg/map_projector_info.hpp>
+#include <geographic_msgs/msg/geo_point.hpp>
+
+#include <cstdint>
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -20,7 +27,7 @@ namespace boreas
 
 struct BoreasPose
 {
-  long long timestamp_us{0};
+  int64_t timestamp_us{0};
   double easting{0.0};
   double northing{0.0};
   double altitude{0.0};
@@ -37,24 +44,57 @@ struct BoreasPose
 
 struct GnssSample
 {
-  long long timestamp_us{0};
+  int64_t timestamp_us{0};
   double gps_time_sec{0.0};
   double easting{0.0};
   double northing{0.0};
   double altitude{0.0};
   double latitude_rad{0.0};
   double longitude_rad{0.0};
+  double roll{0.0};
+  double pitch{0.0};
+  double heading{0.0};
 };
+
+inline Eigen::Matrix3d barfoot_yaw_rotation(double yaw)
+{
+  const double c = std::cos(yaw);
+  const double s = std::sin(yaw);
+  Eigen::Matrix3d rotation = Eigen::Matrix3d::Identity();
+  rotation(0, 0) = c;
+  rotation(0, 1) = s;
+  rotation(1, 0) = -s;
+  rotation(1, 1) = c;
+  return rotation;
+}
+
+inline Eigen::Matrix3d barfoot_pitch_rotation(double pitch)
+{
+  const double c = std::cos(pitch);
+  const double s = std::sin(pitch);
+  Eigen::Matrix3d rotation = Eigen::Matrix3d::Identity();
+  rotation(0, 0) = c;
+  rotation(0, 2) = -s;
+  rotation(2, 0) = s;
+  rotation(2, 2) = c;
+  return rotation;
+}
+
+inline Eigen::Matrix3d barfoot_roll_rotation(double roll)
+{
+  const double c = std::cos(roll);
+  const double s = std::sin(roll);
+  Eigen::Matrix3d rotation = Eigen::Matrix3d::Identity();
+  rotation(1, 1) = c;
+  rotation(1, 2) = s;
+  rotation(2, 1) = -s;
+  rotation(2, 2) = c;
+  return rotation;
+}
 
 inline Eigen::Matrix3d yaw_pitch_roll_to_rotation(double yaw, double pitch, double roll)
 {
-  const Eigen::Matrix3d rot_yaw =
-    Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
-  const Eigen::Matrix3d rot_pitch =
-    Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()).toRotationMatrix();
-  const Eigen::Matrix3d rot_roll =
-    Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()).toRotationMatrix();
-  return rot_roll * rot_pitch * rot_yaw;
+  return barfoot_roll_rotation(roll) * barfoot_pitch_rotation(pitch) * barfoot_yaw_rotation(yaw);
 }
 
 inline Eigen::Isometry3d pose_to_isometry(const BoreasPose & pose)
@@ -159,7 +199,7 @@ inline sensor_msgs::msg::NavSatFix gnss_to_nav_sat_fix(const GnssSample & sample
 }
 
 inline bool load_pose_csv(
-  const std::string & path, std::unordered_map<long long, BoreasPose> & poses)
+  const std::string & path, std::unordered_map<int64_t, BoreasPose> & poses)
 {
   std::ifstream file(path);
   if (!file.is_open()) {
@@ -185,7 +225,7 @@ inline bool load_pose_csv(
     }
 
     BoreasPose pose;
-    pose.timestamp_us = static_cast<long long>(values[0]);
+    pose.timestamp_us = static_cast<int64_t>(values[0]);
     pose.easting = values[1];
     pose.northing = values[2];
     pose.altitude = values[3];
@@ -231,12 +271,15 @@ inline bool load_gnss_csv(const std::string & path, std::vector<GnssSample> & sa
 
     GnssSample sample;
     sample.gps_time_sec = values[0];
-    sample.timestamp_us = static_cast<long long>(std::llround(values[0] * 1'000'000.0));
+    sample.timestamp_us = static_cast<int64_t>(std::llround(values[0] * 1'000'000.0));
     sample.easting = values[1];
     sample.northing = values[2];
     sample.altitude = values[3];
     sample.latitude_rad = values[16];
     sample.longitude_rad = values[17];
+    sample.roll = values[7];
+    sample.pitch = values[8];
+    sample.heading = values[9];
     samples.push_back(sample);
   }
 
@@ -244,13 +287,112 @@ inline bool load_gnss_csv(const std::string & path, std::vector<GnssSample> & sa
 }
 
 inline const BoreasPose * lookup_pose(
-  const std::unordered_map<long long, BoreasPose> & poses, long long timestamp_us)
+  const std::unordered_map<int64_t, BoreasPose> & poses, int64_t timestamp_us)
 {
   const auto it = poses.find(timestamp_us);
   if (it == poses.end()) {
     return nullptr;
   }
   return &it->second;
+}
+
+inline GnssSample interpolate_gnss(
+  const std::vector<GnssSample> & samples, int64_t timestamp_us)
+{
+  if (samples.empty()) {
+    return {};
+  }
+
+  const double query_sec = static_cast<double>(timestamp_us) * 1e-6;
+  if (query_sec <= samples.front().gps_time_sec) {
+    return samples.front();
+  }
+  if (query_sec >= samples.back().gps_time_sec) {
+    return samples.back();
+  }
+
+  const auto upper = std::lower_bound(
+    samples.begin(), samples.end(), query_sec,
+    [](const GnssSample & sample, double time) { return sample.gps_time_sec < time; });
+
+  const auto lower = upper - 1;
+  const double dt = upper->gps_time_sec - lower->gps_time_sec;
+  if (dt <= 0.0) {
+    return *lower;
+  }
+
+  const double alpha = (query_sec - lower->gps_time_sec) / dt;
+  GnssSample interpolated;
+  interpolated.gps_time_sec = query_sec;
+  interpolated.timestamp_us = timestamp_us;
+  interpolated.easting = lower->easting + alpha * (upper->easting - lower->easting);
+  interpolated.northing = lower->northing + alpha * (upper->northing - lower->northing);
+  interpolated.altitude = lower->altitude + alpha * (upper->altitude - lower->altitude);
+  interpolated.latitude_rad =
+    lower->latitude_rad + alpha * (upper->latitude_rad - lower->latitude_rad);
+  interpolated.longitude_rad =
+    lower->longitude_rad + alpha * (upper->longitude_rad - lower->longitude_rad);
+  interpolated.roll = lower->roll + alpha * (upper->roll - lower->roll);
+  interpolated.pitch = lower->pitch + alpha * (upper->pitch - lower->pitch);
+  interpolated.heading = lower->heading + alpha * (upper->heading - lower->heading);
+  return interpolated;
+}
+
+inline Eigen::Isometry3d gnss_sample_to_enu_isometry(const GnssSample & sample)
+{
+  Eigen::Isometry3d transform = Eigen::Isometry3d::Identity();
+  transform.linear() = yaw_pitch_roll_to_rotation(sample.heading, sample.pitch, sample.roll);
+  transform.translation() =
+    Eigen::Vector3d(sample.easting, sample.northing, sample.altitude);
+  return transform;
+}
+
+inline Eigen::Isometry3d gnss_sample_to_map_isometry(
+  const GnssSample & sample, const autoware_map_msgs::msg::MapProjectorInfo & projector_info)
+{
+  geographic_msgs::msg::GeoPoint gps_point;
+  gps_point.latitude = sample.latitude_rad * 180.0 / M_PI;
+  gps_point.longitude = sample.longitude_rad * 180.0 / M_PI;
+  gps_point.altitude = sample.altitude;
+
+  geometry_msgs::msg::Point position =
+    autoware::geography_utils::project_forward(gps_point, projector_info);
+  position.z = autoware::geography_utils::convert_height(
+    position.z, gps_point.latitude, gps_point.longitude,
+    autoware_map_msgs::msg::MapProjectorInfo::WGS84, projector_info.vertical_datum);
+
+  Eigen::Isometry3d transform = Eigen::Isometry3d::Identity();
+  transform.linear() = yaw_pitch_roll_to_rotation(sample.heading, sample.pitch, sample.roll);
+  transform.translation() = Eigen::Vector3d(position.x, position.y, position.z);
+  return transform;
+}
+
+inline Eigen::Isometry3d enu_sensor_pose_to_map_isometry(
+  const Eigen::Isometry3d & T_enu_sensor, const GnssSample & gnss_sample,
+  const autoware_map_msgs::msg::MapProjectorInfo & projector_info)
+{
+  const Eigen::Isometry3d T_enu_applanix = gnss_sample_to_enu_isometry(gnss_sample);
+  const Eigen::Isometry3d T_map_applanix =
+    gnss_sample_to_map_isometry(gnss_sample, projector_info);
+  return T_map_applanix * T_enu_applanix.inverse() * T_enu_sensor;
+}
+
+inline nav_msgs::msg::Odometry isometry_to_odometry(
+  const Eigen::Isometry3d & transform, const std::string & parent_frame,
+  const std::string & child_frame)
+{
+  nav_msgs::msg::Odometry odom;
+  odom.header.frame_id = parent_frame;
+  odom.child_frame_id = child_frame;
+  odom.pose.pose.position.x = transform.translation().x();
+  odom.pose.pose.position.y = transform.translation().y();
+  odom.pose.pose.position.z = transform.translation().z();
+  const Eigen::Quaterniond quat(transform.rotation());
+  odom.pose.pose.orientation.x = quat.x();
+  odom.pose.pose.orientation.y = quat.y();
+  odom.pose.pose.orientation.z = quat.z();
+  odom.pose.pose.orientation.w = quat.w();
+  return odom;
 }
 
 }  // namespace boreas

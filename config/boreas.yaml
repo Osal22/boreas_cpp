@@ -1,4 +1,4 @@
-/**:                                               #GNSS cycle 5Hz, IMU cycle 50Hz.
+/**:                                               # GNSS 200 Hz in gps_post_process.csv
   ros__parameters:
     output_bag: "boreas_bag"
     bag_duration_sec: 30.0        # 0 = full sequence; e.g. 300.0 for 5 minutes

@@ -2,16 +2,26 @@
 # Computed from boreas-2020-11-26-13-58/calib/T_camera_lidar.txt
 # with base_link -> lidar = Rz(-45 deg), zero translation.
 #
-# Tree: map -> base_link -> {lidar, camera}
-#   base_link -> camera = T_base_link_lidar * inv(T_camera_lidar)
+# Tree:
+#   map -> applanix (dynamic /tf, GNSS + map_projector_info)
+#   applanix -> base_link (static /tf_static, from T_applanix_lidar.txt)
+#   base_link -> {lidar, camera_lidar} (static /tf_static)
+#   lidar -> lidar_odom, camera_lidar -> camera_odom (dynamic /tf, dataset inverse poses)
 /**:
   ros__parameters:
     map_frame: "map"
+    applanix_frame: "applanix"
     base_link_frame: "base_link"
     lidar_frame: "lidar"
-    camera_frame: "camera"
+    camera_lidar_frame: "camera_lidar"
+    lidar_odom_frame: "lidar_odom"
+    camera_odom_frame: "camera_odom"
+    gnss_frame: "applanix"
     tf_topic: "/tf"
     tf_static_topic: "/tf_static"
+    map_projector_info_path: ""
+    map_projector_info_topic: "/map/map_projector_info"
+    write_map_projector_info: true
     base_link_to_lidar_yaw_deg: -45.0
     use_precomputed_static_tf: true
 
@@ -20,7 +30,7 @@
       translation: [0.0, 0.0, 0.0]
       rotation: [0.0, 0.0, -0.382683432365, 0.923879532511]  # xyzw, Rz(-45 deg)
 
-    # base_link -> camera (composed from calib + yaw offset above)
-    base_link_to_camera:
+    # base_link -> camera_lidar (composed from calib + yaw offset above)
+    base_link_to_camera_lidar:
       translation: [0.631462188983, -0.002881403405, -0.240947060672]
       rotation: [0.512406320849, -0.496564693816, 0.487312028985, -0.503378837076]  # xyzw

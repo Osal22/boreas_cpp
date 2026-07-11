@@ -4,15 +4,17 @@
     <arg name="tf_config" default="$(find-pkg-share boreas)/config/boreas_tf.yaml"/>
     <arg name="data_path" default="/home/mosal/Downloads/boreas-2020-11-26-13-58"/>
     <arg name="output_bag" default="/home/mosal/rosbags/boreas_bag"/>
-    <arg name="bag_duration_sec" default="300"/>
+    <arg name="bag_duration_sec" default="300.0"/>
+    <arg name="map_projector_info_path" default=""/>
 
 <!-- launch-prefix="xterm -e gdb args" -->
     <node pkg="boreas" exec="boreas" name="boreas" >
+        <param from="$(var config)"/>
+        <param from="$(var tf_config)"/>
         <param name="data_path" value="$(var data_path)"/>
         <param name="output_bag" value="$(var output_bag)"/>
         <param name="bag_duration_sec" value="$(var bag_duration_sec)"/>
-        <param from="$(var config)"/>
-        <param from="$(var tf_config)"/>
+        <param name="map_projector_info_path" value="$(var map_projector_info_path)"/>
     </node>
 
 </launch>
