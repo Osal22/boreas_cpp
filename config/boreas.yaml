@@ -1,5 +1,22 @@
 /**:                                               #GNSS cycle 5Hz, IMU cycle 50Hz.
   ros__parameters:
+    output_bag: "boreas_bag"
+    bag_duration_sec: 30.0        # 0 = full sequence; e.g. 300.0 for 5 minutes
+    storage_id: "sqlite3"
+    lidar_downsample_stride: 1      # 1=full resolution, 2=half points (helps RViz keep ~10 Hz)
+    pointcloud_topic: "/boreas/pointcloud"
+    image_topic: "/boreas/image/compressed"  # sensor_msgs/CompressedImage in bag
+    image_compression_format: "png"  # png: store source PNG bytes; jpeg: re-encode
+    jpeg_quality: 90
+    camera_info_topic: "/boreas/camera_info"
+    clock_topic: "/clock"
+    lidar_ground_truth_topic: "/boreas/ground_truth/lidar_odom"
+    camera_ground_truth_topic: "/boreas/ground_truth/camera_odom"
+    gnss_topic: "/boreas/gnss/fix"
+    ground_truth_parent_frame: "map"
+    write_ground_truth: true
+    write_tf: true
+    write_gnss: true
   # image size
     width: 2448
     height: 2048

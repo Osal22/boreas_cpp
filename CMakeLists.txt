@@ -5,7 +5,6 @@ find_package(autoware_cmake REQUIRED)
 autoware_package()
 
 find_package(OpenCV REQUIRED)
-find_package(yaml-cpp REQUIRED)
 
 
 include_directories(${CMAKE_SOURCE_DIR}/include)
@@ -15,7 +14,7 @@ ament_auto_add_executable(${PROJECT_NAME}
 )
 
 target_link_libraries(${PROJECT_NAME}
-  ${OpenCV_LIBRARIES} yaml-cpp
+  ${OpenCV_LIBRARIES}
 )
 
 ament_auto_package(INSTALL_TO_SHARE launch config)
